@@ -1,93 +1,101 @@
 import {render, replace, remove, RenderPosition} from '../framework/render.js';
+import he from 'he';
 import TripInfoView from '../view/trip-info-view.js';
 import {sortPointByDay} from '../utils/sort.js';
+import {getOffersByType} from '../model/points-model.js';
+
+const DISPLAY_LIMIT = 3;
+const INITIAL_POSITION = 0;
+const OFFSET_VAL = 1;
+const PATH_JOINER = ' &mdash; ';
+const PATH_ELLIPSIS = ' &mdash; ... &mdash; ';
 
 export default class TripInfoPresenter {
-  #tripInfoContainer = null;
-  #pointsModel = null;
-  #tripInfoComponent = null;
+  #container = null;
+  #model = null;
+  #viewComponent = null;
 
   constructor({tripInfoContainer, pointsModel}) {
-    this.#tripInfoContainer = tripInfoContainer;
-    this.#pointsModel = pointsModel;
+    this.#container = tripInfoContainer;
+    this.#model = pointsModel;
 
-    this.#pointsModel.addObserver(this.#handleModelEvent);
+    this.#model.addObserver(this.#onDataChange);
   }
 
   init() {
-    const points = this.#pointsModel.points;
-    const destinations = this.#pointsModel.destinations;
-    const offers = this.#pointsModel.offers;
+    const list = this.#model.points;
+    const pointsDestinations = this.#model.destinations;
+    const pointsOffers = this.#model.offers;
 
-    if (points.length === 0 || destinations.length === 0 || offers.length === 0) {
-      remove(this.#tripInfoComponent);
-      this.#tripInfoComponent = null;
+    if (list.length === 0 || pointsDestinations.length === 0 || pointsOffers.length === 0) {
+      remove(this.#viewComponent);
+      this.#viewComponent = null;
       return;
     }
 
-    const sortedPoints = [...points].sort(sortPointByDay);
+    const orderedPoints = [...list].sort(sortPointByDay);
 
-    const route = this.#calculateRoute(sortedPoints, destinations);
-    const dates = this.#calculateDates(sortedPoints);
-    const price = this.#calculatePrice(sortedPoints, offers);
+    const fullRoute = this.#buildRoute(orderedPoints, pointsDestinations);
+    const rangeDates = this.#buildDates(orderedPoints);
+    const finalPrice = this.#buildPrice(orderedPoints, pointsOffers);
 
-    const prevTripInfoComponent = this.#tripInfoComponent;
+    const oldComponent = this.#viewComponent;
 
-    this.#tripInfoComponent = new TripInfoView({route, dates, price});
+    this.#viewComponent = new TripInfoView({route: fullRoute, dates: rangeDates, price: finalPrice});
 
-    if (prevTripInfoComponent === null) {
-      render(this.#tripInfoComponent, this.#tripInfoContainer, RenderPosition.AFTERBEGIN);
+    if (oldComponent === null) {
+      render(this.#viewComponent, this.#container, RenderPosition.AFTERBEGIN);
       return;
     }
 
-    replace(this.#tripInfoComponent, prevTripInfoComponent);
-    remove(prevTripInfoComponent);
+    replace(this.#viewComponent, oldComponent);
+    remove(oldComponent);
   }
 
-  #handleModelEvent = () => {
+  #onDataChange = () => {
     this.init();
   };
 
-  #calculateRoute(points, destinations) {
-    const pointDestinations = points.map((point) => {
-      const dest = destinations.find((d) => d.id === point.destination);
-      return dest ? dest.name : '';
+  #buildRoute(points, destinations) {
+    const titles = points.map((point) => {
+      const match = destinations.find((item) => item.id === point.destination);
+      return match ? he.encode(match.name) : '';
     });
 
-    if (pointDestinations.length <= 3) {
-      return pointDestinations.join(' &mdash; ');
+    if (titles.length <= DISPLAY_LIMIT) {
+      return titles.join(PATH_JOINER);
     }
 
-    return `${pointDestinations[0]} &mdash; ... &mdash; ${pointDestinations[pointDestinations.length - 1]}`;
+    return `${titles[INITIAL_POSITION]}${PATH_ELLIPSIS}${titles[titles.length - OFFSET_VAL]}`;
   }
 
-  #calculateDates(points) {
-    const startDate = points[0].dateFrom;
-    const endDate = points[points.length - 1].dateTo;
+  #buildDates(points) {
+    const start = points[0].dateFrom;
+    const end = points[points.length - 1].dateTo;
 
-    const startFormat = new Date(startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    const endFormat = new Date(endDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const formattedStart = new Date(start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const formattedEnd = new Date(end).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
-    return `${startFormat}&nbsp;&mdash;&nbsp;${endFormat}`;
+    return `${formattedStart}&nbsp;&mdash;&nbsp;${formattedEnd}`;
   }
 
-  #calculatePrice(points, allOffers) {
-    let total = 0;
+  #buildPrice(points, allOffers) {
+    let cost = 0;
 
     points.forEach((point) => {
-      total += point.basePrice;
+      cost += point.basePrice;
 
-      const pointTypeOffers = allOffers.find((offer) => offer.type === point.type);
-      if (pointTypeOffers) {
-        point.offers.forEach((offerId) => {
-          const selectedOffer = pointTypeOffers.offers.find((offer) => offer.id === offerId);
-          if (selectedOffer) {
-            total += selectedOffer.price;
+      const group = getOffersByType(allOffers, point.type);
+      if (group) {
+        point.offers.forEach((id) => {
+          const matchedOffer = group.offers.find((offer) => offer.id === id);
+          if (matchedOffer) {
+            cost += matchedOffer.price;
           }
         });
       }
     });
 
-    return total;
+    return cost;
   }
 }

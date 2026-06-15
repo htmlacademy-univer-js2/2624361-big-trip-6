@@ -1,6 +1,8 @@
 import Observable from '../framework/observable.js';
 import {UpdateType} from '../const.js';
 
+export const getOffersByType = (offers, type) => offers.find((offer) => offer.type === type);
+
 export default class PointsModel extends Observable {
   #pointsApiService = null;
   #points = [];
